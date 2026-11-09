@@ -1,0 +1,40 @@
+services:
+  #  SERVIDORES 
+  server-py:
+    build:
+      context: ./python-app
+      dockerfile: Dockerfile.server
+    command: ["5555"]
+    volumes:
+      - py_data:/app
+
+  server-node:
+    build:
+      context: ./node-app
+      dockerfile: Dockerfile.server
+    command: ["5556"]
+    volumes:
+      - node_data:/app
+
+  #  CLIENTES (BOTS) 
+  bot-py:
+    build:
+      context: ./python-app
+      dockerfile: Dockerfile.bot
+    # O bot em Python vai conectar no servidor Node pra provar a interoperabilidade
+    command: ["Felipe", "tcp://server-node:5556"]
+    depends_on:
+      - server-node
+
+  bot-node:
+    build:
+      context: ./node-app
+      dockerfile: Dockerfile.bot
+    # O bot em Node vai conectar no servidor Python
+    command: ["Visitante", "tcp://server-py:5555"]
+    depends_on:
+      - server-py
+
+volumes:
+  py_data:
+  node_data:
