@@ -1,40 +1,37 @@
+﻿version: '3.8'
+
 services:
-  #  SERVIDORES 
-  server-py:
-    build:
+  proxy:
+    build: 
+      context: ./python-app
+      dockerfile: Dockerfile.proxy
+    ports:
+      - "5557:5557"
+      - "5558:5558"
+
+  server:
+    build: 
       context: ./python-app
       dockerfile: Dockerfile.server
-    command: ["5555"]
+    ports:
+      - "5555:5555"
     volumes:
-      - py_data:/app
+      - ./data:/app/data
+    depends_on:
+      - proxy
 
-  server-node:
-    build:
-      context: ./node-app
-      dockerfile: Dockerfile.server
-    command: ["5556"]
-    volumes:
-      - node_data:/app
-
-  #  CLIENTES (BOTS) 
-  bot-py:
-    build:
+  bot1:
+    build: 
       context: ./python-app
       dockerfile: Dockerfile.bot
-    # O bot em Python vai conectar no servidor Node pra provar a interoperabilidade
-    command: ["Felipe", "tcp://server-node:5556"]
     depends_on:
-      - server-node
+      - server
+      - proxy
 
-  bot-node:
-    build:
-      context: ./node-app
+  bot2:
+    build: 
+      context: ./python-app
       dockerfile: Dockerfile.bot
-    # O bot em Node vai conectar no servidor Python
-    command: ["Visitante", "tcp://server-py:5555"]
     depends_on:
-      - server-py
-
-volumes:
-  py_data:
-  node_data:
+      - server
+      - proxy
