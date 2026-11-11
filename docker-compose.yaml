@@ -1,6 +1,13 @@
 ﻿version: '3.8'
 
 services:
+  referencia:
+    build: 
+      context: ./python-app
+      dockerfile: Dockerfile.referencia
+    ports:
+      - "5556:5556"
+
   proxy:
     build: 
       context: ./python-app
@@ -19,6 +26,7 @@ services:
       - ./data:/app/data
     depends_on:
       - proxy
+      - referencia
 
   bot1:
     build: 
