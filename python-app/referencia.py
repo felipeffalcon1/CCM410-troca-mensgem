@@ -8,9 +8,9 @@ def main():
 
     servidores = {}
     next_rank = 1
-    TIMEOUT = 30 # Segundos sem heartbeat para remover o servidor
+    TIMEOUT = 30 
 
-    print("[REFERENCIA] Iniciado na porta 5556...")
+    print("[REFERENCIA] Iniciado na porta 5556 (Parte 4 - Sem timestamp no Heartbeat)...")
 
     while True:
         req = rep.recv_json()
@@ -19,16 +19,12 @@ def main():
         
         agora = time.time()
         
-        # Remove servidores que não mandam heartbeat (Timeout)
-        servidores_ativos = {}
-        for k, v in servidores.items():
-            if agora - v["last_heartbeat"] < TIMEOUT:
-                servidores_ativos[k] = v
+        servidores_ativos = {k: v for k, v in servidores.items() if agora - v["last_heartbeat"] < TIMEOUT}
         servidores = servidores_ativos
 
         if comando == "registrar":
             if nome not in servidores:
-                servidores[nome] = {"rank": next_rank, "last_heartbeat": agora}
+                servidores[nome] = {"rank": next_rank, "last_heartbeat": agora, "nome": nome}
                 next_rank += 1
             else:
                 servidores[nome]["last_heartbeat"] = agora
@@ -41,7 +37,8 @@ def main():
         elif comando == "heartbeat":
             if nome in servidores:
                 servidores[nome]["last_heartbeat"] = agora
-            rep.send_json({"status": "OK", "timestamp_referencia": time.time()})
+            # PARTE 4: Responde apenas OK, sem enviar a hora!
+            rep.send_json({"status": "OK"})
 
 if __name__ == "__main__":
     main()

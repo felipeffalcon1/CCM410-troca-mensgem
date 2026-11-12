@@ -1,10 +1,10 @@
-﻿version: '3.8'
-
-services:
+﻿services:
   referencia:
     build: 
       context: ./python-app
       dockerfile: Dockerfile.referencia
+    environment:
+      - PYTHONUNBUFFERED=1
     ports:
       - "5556:5556"
 
@@ -12,6 +12,8 @@ services:
     build: 
       context: ./python-app
       dockerfile: Dockerfile.proxy
+    environment:
+      - PYTHONUNBUFFERED=1
     ports:
       - "5557:5557"
       - "5558:5558"
@@ -20,8 +22,10 @@ services:
     build: 
       context: ./python-app
       dockerfile: Dockerfile.server
-    ports:
-      - "5555:5555"
+    environment:
+      - PYTHONUNBUFFERED=1
+    expose:
+      - "5555"
     volumes:
       - ./data:/app/data
     depends_on:
@@ -32,6 +36,8 @@ services:
     build: 
       context: ./python-app
       dockerfile: Dockerfile.bot
+    environment:
+      - PYTHONUNBUFFERED=1
     depends_on:
       - server
       - proxy
@@ -40,6 +46,8 @@ services:
     build: 
       context: ./python-app
       dockerfile: Dockerfile.bot
+    environment:
+      - PYTHONUNBUFFERED=1
     depends_on:
       - server
       - proxy
