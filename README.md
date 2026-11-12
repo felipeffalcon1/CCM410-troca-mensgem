@@ -1,5 +1,7 @@
 ﻿# Projeto de Sistemas Distribuídos - Troca de Mensagens
 
+ RA:221250731
+
 Este projeto implementa um sistema de troca de mensagens distribuído, contendo servidores, bots simulando clientes, um proxy (broker) para balanceamento e publicação (PUB/SUB e REQ/REP), além de um serviço de referência para coordenar a infraestrutura.
 
 ## Estratégia de Consistência e Replicação (Parte 5)
