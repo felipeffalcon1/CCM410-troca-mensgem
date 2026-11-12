@@ -1,24 +1,18 @@
-CCM410 - Sistema de Troca de Mensagens (BBS)
-Introdução
-O projeto consiste em construir um sistema distribuído de troca de mensagens, nos moldes de um clássico Bulletin Board System (BBS). A ideia principal é permitir uma comunicação assíncrona eficiente e a publicação/inscrição de tópicos entre diferentes clientes e servidores, colocando em prática conceitos fundamentais de sistemas distribuídos, como concorrência e troca de mensagens em rede.
+﻿# Projeto de Sistemas Distribuídos - Troca de Mensagens (ZeroMQ)
 
-Escolhas Técnicas e Arquiteturais
-1. Linguagens de Programação
-Python e Node.js: A escolha foi baseada na praticidade para lidar com sockets, manipulação de dados em tempo real e na facilidade de encontrar bibliotecas focadas em mensageria assíncrona. Ambas entregam um desenvolvimento ágil e contam com um ecossistema excelente para comunicação de rede.
+Este projeto implementa um sistema de troca de mensagens distribuído, contendo servidores, bots simulando clientes, um proxy (broker) para balanceamento e publicação (PUB/SUB e REQ/REP), além de um serviço de referência para coordenar a infraestrutura.
 
-2. Mecanismo de Serialização
-JSON: Escolhido para empacotar e estruturar as mensagens que trafegam entre os nós.
+## Estratégia de Consistência e Replicação (Parte 5)
 
-Por que escolhemos: É um formato leve, fácil de ler (human-friendly), independente de linguagem e amplamente suportado, o que simplifica bastante o parse e a validação dos dados enviados.
+Para garantir que todos os servidores mantenham uma cópia consistente de todo o histórico de mensagens, foi implementada a estratégia de **Replicação Ativa Baseada em Eventos (Broadcast)** usando o padrão Publish-Subscribe.
 
-3. Persistência de Dados
-Arquivos locais / Estruturas em memória: As mensagens e os tópicos do sistema são salvos em arquivos locais simples ou gerenciados diretamente em memória com algum dump estruturado.
+### Como a replicação resolve o problema:
+No modelo padrão, o Broker roteava as mensagens dos clientes para os servidores usando um balanceamento do tipo *Round-Robin*. Isso causava uma fragmentação no armazenamento: cada servidor detinha apenas as mensagens que ele próprio havia processado, ocasionando perda de dados irrecuperável caso um servidor falhasse. 
+Com o modelo de replicação ativo, todo dado recebido e gravado por um servidor é imediatamente espelhado em todos os outros servidores da rede. Se qualquer servidor for interrompido, o histórico continuará íntegro nos sobreviventes, garantindo total tolerância a falhas.
 
-Por que escolhemos: Para o escopo acadêmico da disciplina, essa abordagem resolve o problema com simplicidade e eficiência, evitando a complexidade desnecessária de subir um banco de dados relacional pesado logo de início.
-### 4. Parte 2: Padrão Pub/Sub e Proxy (ZeroMQ)
-Nesta etapa, o sistema foi expandido para suportar o padrão Publish/Subscribe usando um nó intermediário (Proxy). O Servidor se conecta ao Proxy via socket `PUB` na porta `5557`, enquanto os clientes (bots) assinam os canais conectando via socket `SUB` na porta `5558`. A comunicação dos comandos de publicação ainda trafega pelo canal `REQ/REP`.
-
-Para permitir a leitura de mensagens em tempo real sem travar a thread principal de envio dos bots, foi implementado o uso de `Threading`. 
-
-### 5. Persistência em Disco
-A persistência dos dados e publicações foi implementada através de um volume Docker vinculado à pasta local `./data`, salvando as mensagens estruturadas num formato `mensagens.json`. Foi escolhido o padrão de escrita sequencial em JSON no modo *append* por ser leve, não necessitar de instalação de bancos externos e prevenir corrupção em falhas repentinas.
+### Como foi implementado:
+Aproveitamos a infraestrutura de comunicação `PUB/SUB` do *ZeroMQ* que já estava provisionada no Broker (`proxy`) para a distribuição de mensagens aos clientes. 
+1. Adicionou-se uma rotina secundária em **todas** as instâncias de servidor que efetua uma assinatura (Subscribe) contínua no tópico interno `REPLICA`.
+2. Quando qualquer servidor recebe um comando de publicação do cliente, ele grava a mensagem no seu volume de disco local, mas imediatamente em seguida publica o pacote no canal `REPLICA` enviando junto o seu próprio identificador (ID do container).
+3. Os demais servidores, ao detectarem um dado no tópico `REPLICA` cujo rementente é diferente de si mesmos, extraem a carga útil e persistem o dado em seus respectivos bancos (`mensagens.json`).
+4. Para garantir a segurança dos dados simultâneos (corrida de threads na gravação do mesmo arquivo json), aplicou-se a biblioteca nativa `threading.Lock()` envolvendo as operações de I/O em disco.

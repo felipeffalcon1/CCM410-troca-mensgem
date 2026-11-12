@@ -8,9 +8,6 @@ from datetime import datetime, timezone
 
 DATA_DIR = "/app/data"
 DB_FILE = f"{DATA_DIR}/mensagens.json"
-
-# Na Parte 4, usamos o hostname (container ID) para que cada réplica do servidor 
-# seja única e eles consigam se achar pela rede interna do Docker.
 NOME_SERVIDOR = socket.gethostname()
 
 relogio_logico = 0
@@ -18,38 +15,61 @@ relogio_offset = 0.0
 meu_rank = 0
 coordenador_atual = None
 
+# Lock para evitar corromper o arquivo quando várias threads tentarem salvar ao mesmo tempo
+db_lock = threading.Lock()
+
 def get_tempo_fisico_iso():
     timestamp_sincronizado = time.time() + relogio_offset
     return datetime.fromtimestamp(timestamp_sincronizado, tz=timezone.utc).isoformat()
 
 def salvar_mensagem(canal, mensagem, timestamp, relogio):
     os.makedirs(DATA_DIR, exist_ok=True)
-    with open(DB_FILE, "a") as f:
-        log = {"canal": canal, "mensagem": mensagem, "timestamp": timestamp, "relogio_logico": relogio}
-        f.write(json.dumps(log) + "\n")
+    with db_lock:
+        with open(DB_FILE, "a") as f:
+            log = {"canal": canal, "mensagem": mensagem, "timestamp": timestamp, "relogio_logico": relogio}
+            f.write(json.dumps(log) + "\n")
 
-def escutar_coordenador(context):
-    """Thread que escuta mensagens no tópico 'servers' para saber quem ganhou a eleição"""
+def escutar_eventos_internos(context):
+    """Thread que escuta eleição ('servers') e replicação ('REPLICA')"""
     global coordenador_atual
     sub = context.socket(zmq.SUB)
     sub.connect("tcp://proxy:5558")
+    
+    # Assina os tópicos internos
     sub.setsockopt_string(zmq.SUBSCRIBE, "servers")
+    sub.setsockopt_string(zmq.SUBSCRIBE, "REPLICA")
+    
     while True:
         try:
             msg = sub.recv_string()
-            topico, nome_coord = msg.split(" ", 1)
+            partes = msg.split(" ", 2)
+            topico = partes[0]
+            
             if topico == "servers":
-                coordenador_atual = nome_coord
+                coordenador_atual = partes[1]
                 print(f"\n[*] AVISO: Novo coordenador eleito -> {coordenador_atual}")
-        except:
+                
+            elif topico == "REPLICA":
+                remetente = partes[1]
+                payload_str = partes[2]
+                
+                # Só salva se a mensagem não foi enviada por mim mesmo
+                if remetente != NOME_SERVIDOR:
+                    payload = json.loads(payload_str)
+                    salvar_mensagem(
+                        payload.get("canal"),
+                        payload.get("mensagem"),
+                        payload.get("timestamp_envio"),
+                        payload.get("relogio_logico")
+                    )
+                    print(f"[REPLICA] Mensagem sincronizada via {remetente}.")
+        except Exception:
             pass
 
 def iniciar_eleicao(context, pub_socket):
-    """Algoritmo de Eleição (Bully)"""
     global coordenador_atual
     print(f"\n[ELEIÇÃO] {NOME_SERVIDOR} iniciando processo de eleição...")
     
-    # 1. Pega os ranks na Referência
     ref_socket = context.socket(zmq.REQ)
     ref_socket.connect("tcp://referencia:5556")
     ref_socket.send_json({"comando": "list"})
@@ -59,15 +79,13 @@ def iniciar_eleicao(context, pub_socket):
     candidatos = [s for s in lista if s["rank"] > meu_rank]
     alguem_respondeu = False
 
-    # 2. Pergunta aos de Rank maior se estão vivos
     for s in candidatos:
         req = context.socket(zmq.REQ)
         req.connect(f"tcp://{s['nome']}:5555")
-        req.setsockopt(zmq.RCVTIMEO, 1500) # 1.5s timeout
+        req.setsockopt(zmq.RCVTIMEO, 1500)
         try:
             req.send_json({"comando": "eleicao"})
-            resp = req.recv_json()
-            if resp.get("status") == "OK":
+            if req.recv_json().get("status") == "OK":
                 alguem_respondeu = True
         except:
             pass
@@ -75,7 +93,6 @@ def iniciar_eleicao(context, pub_socket):
             req.close()
 
     if not alguem_respondeu:
-        # Ninguém com rank maior respondeu. Eu sou o líder!
         coordenador_atual = NOME_SERVIDOR
         print(f"[ELEIÇÃO] Venci! Eu sou o novo coordenador.")
         pub_socket.send_string(f"servers {NOME_SERVIDOR}")
@@ -100,9 +117,8 @@ def main():
     meu_rank = ref_socket.recv_json().get("rank")
     print(f"[SERVIDOR {NOME_SERVIDOR}] Registrado | Rank: {meu_rank}")
 
-    threading.Thread(target=escutar_coordenador, args=(context,), daemon=True).start()
+    threading.Thread(target=escutar_eventos_internos, args=(context,), daemon=True).start()
 
-    # Força a eleição ao ligar para decidir quem é o Coordenador
     iniciar_eleicao(context, pub_socket)
 
     canais = ["geral", "noticias", "esportes"]
@@ -119,7 +135,6 @@ def main():
         
         resposta = {"status": "OK", "relogio_logico": relogio_logico}
 
-        # --- Requisições entre Servidores ---
         if comando == "relogio":
             resposta["hora_correta"] = time.time() + relogio_offset
             rep_socket.send_json(resposta)
@@ -127,11 +142,9 @@ def main():
             
         elif comando == "eleicao":
             rep_socket.send_json(resposta)
-            print("[!] Fui intimado para eleição. Reivindicando liderança...")
             iniciar_eleicao(context, pub_socket)
             continue
 
-        # --- Requisições dos Clientes (Bots) ---
         contador_heartbeat += 1
         contador_sync += 1
 
@@ -140,7 +153,6 @@ def main():
             ref_socket.recv_json()
             contador_heartbeat = 0
 
-        # Sincronização de Relógio (a cada 15 msgs)
         if contador_sync >= 15:
             if coordenador_atual and coordenador_atual != NOME_SERVIDOR:
                 req_sync = context.socket(zmq.REQ)
@@ -148,13 +160,10 @@ def main():
                 req_sync.setsockopt(zmq.RCVTIMEO, 2000)
                 try:
                     req_sync.send_json({"comando": "relogio"})
-                    resp_sync = req_sync.recv_json()
-                    hora_correta = resp_sync.get("hora_correta")
+                    hora_correta = req_sync.recv_json().get("hora_correta")
                     if hora_correta:
                         relogio_offset = hora_correta - time.time()
-                        print(f"[SYNC] Relógio ajustado. Novo offset: {relogio_offset:.4f}s")
                 except:
-                    print(f"[!] Coordenador {coordenador_atual} sumiu! Iniciando eleição...")
                     iniciar_eleicao(context, pub_socket)
                 finally:
                     req_sync.close()
@@ -182,13 +191,24 @@ def main():
             
             if canal in canais:
                 timestamp_sinc = get_tempo_fisico_iso()
+                
+                # Adicionado 'canal' no payload para o servidor que replicar saber onde salvar
                 payload = json.dumps({
+                    "canal": canal,
                     "mensagem": mensagem, 
                     "timestamp_envio": timestamp_sinc,
                     "relogio_logico": relogio_logico
                 })
-                pub_socket.send_string(f"{canal} {payload}")
+                
+                # Salva localmente
                 salvar_mensagem(canal, mensagem, timestamp_sinc, relogio_logico)
+                
+                # Envia para os clientes (Bots) assinantes
+                pub_socket.send_string(f"{canal} {payload}")
+                
+                # PARTE 5: Publica a mensagem para replicar nos outros servidores
+                pub_socket.send_string(f"REPLICA {NOME_SERVIDOR} {payload}")
+                
                 rep_socket.send_json(resposta)
             else:
                 resposta["status"] = "erro"
